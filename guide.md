@@ -596,7 +596,7 @@ Make a new file called `MarketHandler.sol` in the `/contracts` directory and add
 pragma solidity ^0.8.0;
 
 import "../interfaces/IMarketHandler.sol";
-import "../interfaces/ITrading.sol";
+import "../interfaces/IPredictionMarket.sol";
 import "../interfaces/IERC20.sol";
 
 import "@openzeppelin/contracts/utils/Context.sol";
@@ -633,7 +633,7 @@ contract PM_MarketHandler is Context, Ownable, IMarketHandler {
     /// @notice The context of the side that won.
     bool public winner;
 
-    /// @notice The id alloted in the Trading contract for each prediction as predictionId.
+    /// @notice The id alloted in the Prediction Market contract for each prediction as predictionId.
     uint256 public immutable I_SELF_ID;
     /// @notice Price of 1 token of either side. Is a multiple of 10**4.
     uint256 public immutable I_BASE_PRICE;
@@ -651,7 +651,7 @@ contract PM_MarketHandler is Context, Ownable, IMarketHandler {
     /// @notice The vault address.
     address private I_VAULT_ADDRESS;
 
-    ITrading private I_TRADING_CONTRACT;
+    IPredictionMarket private I_PREDICTION_CONTRACT;
 
     /// @notice Variables to track the 'Yes' token and its holders
     /// @notice The current valid index where new address is to be pushed in the yesHolders array.
@@ -706,7 +706,7 @@ contract PM_MarketHandler is Context, Ownable, IMarketHandler {
         _;
     }
 
-    /// @param _id The unique predictionId set in the parent Trading contract.
+    /// @param _id The unique predictionId set in the parent Prediction Market contract.
     // _fee * 0.01% of the tokens regardless of the decimals value. Should be a natural number N.
     /// @param _fee The multiple of 0.01% to declare the final trading fee the platform collects.
     /// @param _deadline The timestamp upto which the market is open for trades.
@@ -722,7 +722,7 @@ contract PM_MarketHandler is Context, Ownable, IMarketHandler {
         address _usdcTokenAddress,
         address _vaultAddress
     ) {
-        I_TRADING_CONTRACT = ITrading(_msgSender());
+        I_PREDICTION_CONTRACT = IPredictionMarket(_msgSender());
 
         I_SELF_ID = _id;
         I_BASE_PRICE = _basePrice * 10 ** 4;
@@ -762,7 +762,7 @@ contract PM_MarketHandler is Context, Ownable, IMarketHandler {
         I_USDC_CONTRACT.transfer(I_VAULT_ADDRESS, swapFee);
         reserveFEE += swapFee;
 
-        I_TRADING_CONTRACT.trackProgress(
+        I_PREDICTION_CONTRACT.trackProgress(
             I_SELF_ID,
             _msgSender(),
             amountYes,
@@ -793,7 +793,7 @@ contract PM_MarketHandler is Context, Ownable, IMarketHandler {
         I_USDC_CONTRACT.transfer(I_VAULT_ADDRESS, swapFee);
         reserveFEE += swapFee;
 
-        I_TRADING_CONTRACT.trackProgress(
+        I_PREDICTION_CONTRACT.trackProgress(
             I_SELF_ID,
             _msgSender(),
             -1 * amountYes,
@@ -837,7 +837,7 @@ contract PM_MarketHandler is Context, Ownable, IMarketHandler {
             noIndex.increment();
         }
 
-        I_TRADING_CONTRACT.trackProgress(
+        I_PREDICTION_CONTRACT.trackProgress(
             I_SELF_ID,
             _msgSender(),
             0,
@@ -880,7 +880,7 @@ contract PM_MarketHandler is Context, Ownable, IMarketHandler {
             yesIndex.increment();
         }
 
-        I_TRADING_CONTRACT.trackProgress(
+        I_PREDICTION_CONTRACT.trackProgress(
             I_SELF_ID,
             _msgSender(),
             int256(finalAmount),
@@ -915,7 +915,7 @@ contract PM_MarketHandler is Context, Ownable, IMarketHandler {
 
         reserveUSDC -= totalAmount;
 
-        I_TRADING_CONTRACT.trackProgress(
+        I_PREDICTION_CONTRACT.trackProgress(
             I_SELF_ID,
             _msgSender(),
             0,
@@ -949,7 +949,7 @@ contract PM_MarketHandler is Context, Ownable, IMarketHandler {
 
         reserveUSDC -= totalAmount;
 
-        I_TRADING_CONTRACT.trackProgress(
+        I_PREDICTION_CONTRACT.trackProgress(
             I_SELF_ID,
             _msgSender(),
             -1 * int256(_amount),
@@ -958,8 +958,8 @@ contract PM_MarketHandler is Context, Ownable, IMarketHandler {
         emit SellOrder(_msgSender(), _amount, 0);
     }
 
-    /// @notice The trading contract call this function for each individual prediction.
-    /// Owner being the trading contract.
+    /// @notice The Prediction Market contract call this function for each individual prediction.
+    /// Owner being the Prediction Market contract.
     /// @param vote The nature of the winning side.
     /// vote - True => Yes won
     /// vote - False => No won
@@ -1039,3 +1039,6 @@ contract PM_MarketHandler is Context, Ownable, IMarketHandler {
 }
 ```
 
+As this contract will get deployed each time a new prediction market is made, it inherits the parent prediction market contract's `IMarketHandler` interface.
+
+We then define some public variables to track and check the total USDC collected, total platform fee collected, total USDC collected against YES tokens, total USDC collected against NO tokens, if rewards are ready to be claimed and the context of the side that won. We also defined events that will be emitted once a user buys a side, sells a side, swaps a side, collects their rewards, etc.
