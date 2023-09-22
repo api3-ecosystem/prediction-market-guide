@@ -52,6 +52,12 @@ The project structure should look like this:
 /
 ```
 
+If you want to follow along with the code, you can clone the repo from here.
+
+```bash
+git clone 
+```
+
 ## Coding the Prediction Market
 
 ### Setting up the Interfaces
@@ -447,4 +453,134 @@ contract PredictionMarket is Context, Ownable {
 
 This is the main contract that will be responsible for creating new markets and concluding them on the settlement date.
 
-## Coding 
+We start by defining the `Prediction` struct that will be used to store all the information about a particular prediction like the token symbol, the target price point, the settlement date, fee, etc. We also define a few mappings to track the progress of each prediction and the dAPI's proxy address for each prediction. We'll learn about the dAPI's proxy address more as we move forward.
+
+We then define a few events to track the progress of each prediction and the conclusion of each prediction.
+
+We then define a few modifiers to restrict access to certain functions. 
+
+The main function of this contract is the `createPrediction` function that will be used to create new markets. It takes in a few parameters like:
+
+- The token symbol of the asset we are predicting upon.
+- The address of the dAPI's proxy contract for the asset. This will be used to read the price of the asset on the settlement date.
+- If the asset is predicted to be above or below a certain price point.
+- The target price point for the asset.
+- The deadline timestamp for the prediction.
+- The base price of the prediction token. This is the minimum cost of one 'Yes' or 'No' token for the prediction market to be created. Is a multiple of 0.01 USD or 1 cent.
+
+On each market that is created, a `PM_MarketHandler` contract is deployed that will be responsible for handling all the bets, buying and selling tokens on both sides and concluding the prediction on the settlement date. We'll learn more about the market handler contract as we move forward. 
+
+It then generates a unique `predictionId` for each prediction and stores all the information about the prediction in the `predictions` mapping. It also stores the dAPI's proxy address for each prediction in the `predictionIdToProxy` mapping.
+
+The other important function will be `concludePrediction_2` function that will be called by the settlement contract to conclude the prediction on the settlement date. It takes in the `predictionId` and the `vote` i.e if the prediction came out to be true or false. It then calls the `concludePrediction_3` function on the market handler contract to conclude the prediction.
+
+There are some other getter and setter functions that we'll be using to set the settlement address, vault address, trading fee, etc.
+
+`trackProgress` is a special function that will be called by the market handler contract to track all the things that are happening on all of its child market handlers.
+
+The settlement contract will use API3's dAPIs to get the price of the token on the settlement date and then call the `concludePrediction_2` function on the prediction market contract to conclude the prediction.
+
+## Coding the Settlement Contract
+
+We can now move forward and start coding the settlement contract that will be responsible for concluding the prediction on the settlement date.
+
+Make a new file called `Settlement.sol` in the `/contracts` directory and add the following code:
+
+```solidity
+//SPDX-License-Identifier:MIT
+
+pragma solidity ^0.8.0;
+
+import "@openzeppelin/contracts/access/Ownable.sol";
+import "@api3/contracts/v0.8/interfaces/IProxy.sol";
+
+/// @dev Current order of settling a market :
+/// Settlement : concludePrediction_1 -> PredictionMarket : conludePrediction_2 -> Each Unique MarketHandler : concludePrediction_3
+
+/// @notice We need to track certain properties of the prediction to make sure it it concluded after the deadline only.
+struct Prediction {
+    string tokenSymbol;
+    int224 targetPricePoint;
+    bool isAbove;
+    address proxyAddress;
+    uint256 fee;
+    uint256 timestamp;
+    uint256 deadline;
+    bool isActive;
+    address marketHandler;
+}
+
+interface IPredictionsMarket {
+    function concludePrediction_2(uint256, bool) external;
+
+    function getNextPredictionId() external view returns (uint256);
+
+    function getPrediction(uint256) external view returns (Prediction memory);
+}
+
+error PM_InvalidPredictionId();
+
+/// @dev The contract is inherently a data feed reader
+contract PM_Settlement is Ownable {
+    /// @notice The PredictionMarket contract that acts as a middle ground for Settlement and MarketHandler
+    IPredictionMarket public PredictionMarket;
+
+    /// @param _predictionMarket The PredictionMarket Contract
+    constructor(address _predictionMarket) {
+        PredictionMarket = IPredictionMarket(_predictionMarket);
+    }
+
+    modifier isValidPredictionId(uint256 _id) {
+        uint256 currentUpper = PredictionMarket.getNextPredictionId();
+        if (_id >= currentUpper) revert PM_InvalidPredictionId();
+        _;
+    }
+
+    /// @dev We can add an incentive to whoever calls it get some % of overall protocol fee for a given prediction.
+    /// Note that this should come out > gas fee to run the txn in the first place. Or we use CRON job, EAC,
+    /// Cloud-based scheduler.
+    /// @dev Personally think that the 1st and 3rd options are good candidates.
+    /// @param _predictionId The unique identifier for the prediction to be concluded.
+    function concludePrediction_1(
+        uint256 _predictionId
+    ) external isValidPredictionId(_predictionId) {
+        Prediction memory associatedPrediction = PredictionMarket.getPrediction(
+            _predictionId
+        );
+        address associatedProxyAddress = associatedPrediction.proxyAddress;
+
+        /// API3 FTW
+        (int224 value, uint256 timestamp) = IProxy(associatedProxyAddress)
+            .read();
+
+        require(
+            block.timestamp > associatedPrediction.deadline &&
+                timestamp > associatedPrediction.deadline,
+            "Can't run evaluation! Deadline not met."
+        );
+
+        /// @dev The price was predicted to be above the target point
+        if (associatedPrediction.isAbove) {
+            /// @dev And IS ABOVE the target and hence True
+            if (associatedPrediction.targetPricePoint > value)
+                PredictionMarket.concludePrediction_2(_predictionId, true);
+                /// @dev NOT ABOVE hence False
+            else PredictionMarket.concludePrediction_2(_predictionId, false);
+        } else {
+            if (associatedPrediction.targetPricePoint < value)
+                PredictionMarket.concludePrediction_2(_predictionId, true);
+            else PredictionMarket.concludePrediction_2(_predictionId, false);
+        }
+    }
+}
+```
+
+We again make use of the `Prediction` struct to store all the information about a particular prediction. We also define a few events to track the progress of each prediction and the conclusion of each prediction.
+
+We import the `PredictionMarket` contract to interact with it and define a few modifiers to restrict access to certain functions.
+
+`concludePrediction_1()` is the main function that will be called by the settlement contract to conclude the prediction on the settlement date. It takes in the `predictionId` and uses dAPIs to get the price of the token on the settlement date. It then calls the `concludePrediction_2` function on the prediction market contract to conclude the prediction. It contains all the logic to decide if the prediction came out to be true or false.
+
+To use dAPIs, we need to use the `IProxy` interface and call the `read()` function to get the price of the token on the settlement date. It takes in the proxy address of the dAPI as a parameter and returns the latest price of the token and the timestamp.
+
+## Coding the Market Handler Contract
