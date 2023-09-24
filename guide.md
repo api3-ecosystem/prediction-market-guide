@@ -1041,4 +1041,22 @@ contract PM_MarketHandler is Context, Ownable, IMarketHandler {
 
 As this contract will get deployed each time a new prediction market is made, it inherits the parent prediction market contract's `IMarketHandler` interface.
 
-We then define some public variables to track and check the total USDC collected, total platform fee collected, total USDC collected against YES tokens, total USDC collected against NO tokens, if rewards are ready to be claimed and the context of the side that won. We also defined events that will be emitted once a user buys a side, sells a side, swaps a side, collects their rewards, etc.
+We then define some public variables to track and check the total USDC collected, total platform fee collected, total USDC collected against YES tokens, total USDC collected against NO tokens, if rewards are ready to be claimed and the result of the side that won. We also defined events that will be emitted once a user buys a side, sells a side, swaps a side, collects their rewards, etc.
+
+We use the I_PREDICTION_MARKET_CONTRACT interface to interact with the parent prediction market contract. We also use the `Counters` library to keep track of the number of holders of both YES and NO token for each market and some mappings to track the index of each holder and the amount of tokens they hold.
+
+We then define the required events and modifiers to restrict access to certain functions.
+
+The constructor takes in a few parameters like the `_id`, `_fee`, `_deadline`, `_basePrice`, `_usdcTokenAddress`, `_vaultAddress`. The `_id` is the unique identifier for each prediction created. The `_fee` is the trading fee for each market. The `_deadline` is the timestamp upto which the market is open for trades. The `_basePrice` is the price of 1 token of either side. The `_usdcTokenAddress` is the address of the payment token. The `_vaultAddress` is the address of the vault that will collect the fee when the market is concluded.
+
+We then define the `swapTokenNoWithYes()` function that will be used to swap NO tokens for YES tokens. It takes in the `_amount` of tokens to swap and calculates the equivalent USDC value of the tokens. It then calculates the fee for the swap and the fee for the tokens. It then transfers the tokens from the user to the contract and then transfers the fee to the vault. It then updates the balances of the user and the reserves. It then emits the `SwapOrder` event.
+
+The `swapTokenYesWithNo()` function is the same as the above function but for swapping YES tokens for NO tokens.
+
+If a user just wants to buy YES or NO tokens for a particular market, they can use the `buyNoToken()` and `buyYesToken()` functions respectively. They take in the `_amount` of tokens to buy and calculate the equivalent USDC value of the tokens. They then check if the user has approved the contract to spend their tokens and then transfer the tokens from the user to the contract. They then calculate the fee for the tokens and transfer it to the vault. They then update the balances of the user and the reserves. They then emit the `BuyOrder` event.
+
+If a user wants to sell their tokens, they can use the `sellNoToken()` and `sellYesToken()` functions respectively. It works the same way as the buy function but for selling the YES/NO tokens. It also emits the `SellOrder` event.
+
+The `concludePrediction_3()` function is called by the parent prediction market contract to conclude the prediction on the settlement date. It takes in the `vote` i.e if the prediction came out to be true or false. It then updates the `winner` variable and emits the `WinnerDeclared` event. It then sets the `RewardsClaimable` variable to `true`.
+
+The winners of the prediction market can call the `collectRewards()` function to collect their rewards. It calculates the final pool of the winning side and the initial pool of the winning side. It then calculates the share of the user and transfers it to them. It then emits the `RewardCollected` event.
