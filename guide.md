@@ -1057,6 +1057,71 @@ If a user just wants to buy YES or NO tokens for a particular market, they can u
 
 If a user wants to sell their tokens, they can use the `sellNoToken()` and `sellYesToken()` functions respectively. It works the same way as the buy function but for selling the YES/NO tokens. It also emits the `SellOrder` event.
 
-The `concludePrediction_3()` function is called by the parent prediction market contract to conclude the prediction on the settlement date. It takes in the `vote` i.e if the prediction came out to be true or false. It then updates the `winner` variable and emits the `WinnerDeclared` event. It then sets the `RewardsClaimable` variable to `true`.
+The `concludePrediction_3()` function is called by the parent prediction market contract to conclude the prediction on the settlement date. It takes in the `vote` i.e if the prediction came out to be true or false. It then updates the `winner` variable and emits the `WinnerDeclared` event. It then sets the `RewardsClaimable` variable to `true`. This is the final function that will be called to conclude the prediction.
 
 The winners of the prediction market can call the `collectRewards()` function to collect their rewards. It calculates the final pool of the winning side and the initial pool of the winning side. It then calculates the share of the user and transfers it to them. It then emits the `RewardCollected` event.
+
+There are some other getter functions that we'll be using to get the token reserves, token count of each user, etc.
+
+## Coding the Vault Contract
+
+The `PM_VAULT` contract will be responsible for collecting the fee from each market that is concluded.
+
+```solidity
+//SPDX-License-Identifier:MIT
+
+pragma solidity ^0.8.0;
+
+import "../interfaces/IERC20.sol";
+import "@openzeppelin/contracts/access/Ownable.sol";
+
+/// @notice Vault to store reserveFee of each MarketHandler when its concluded.
+contract PM_Vault is Ownable {
+    /// @notice The payment token address ie USDC
+    IERC20 public immutable I_USDC_CONTRACT;
+
+    /// @param _usdcAddress Address assigned to the immutable USDC
+    constructor(address _usdcAddress) {
+        I_USDC_CONTRACT = IERC20(_usdcAddress);
+    }
+
+    /// @notice Get the current USDC balance of the vault
+    function currentBalance() external view returns (uint256) {
+        return I_USDC_CONTRACT.balanceOf(address(this));
+    }
+
+    /// @notice Transfer all the USDC present in the contract to the owner
+    function sendUSDC() external {
+        uint256 balance = I_USDC_CONTRACT.balanceOf(address(this));
+        I_USDC_CONTRACT.transfer(owner(), balance);
+    }
+}
+```
+
+The constructor takes in the `_usdcAddress` and loads the USDC contract.
+
+- `currentBalance()` returns the current USDC balance of the vault.
+
+- `sendUSDC()` transfers all the USDC present in the contract to the owner.
+
+We're using a `MockUSDC` contract for testing purposes. The code for the MockUSDC contract is as follows:
+
+```solidity
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+
+contract MockUSDC is ERC20 {
+    function decimals() public pure override returns (uint8) {
+        return 6;
+    }
+
+    constructor() ERC20("USDC", "US Dollar Coin") {}
+
+    function mint(address to, uint256 amount) public {
+        _mint(to, amount);
+    }
+}
+```
+
