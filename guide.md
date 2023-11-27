@@ -37,26 +37,31 @@ The predictions market we'll be building will have the following features:
 - We'll be using API3's dAPIs to get the price of the token at the settlement date to resolve the market.
 
 ## Getting Started
-To get started, set up an empty hardhat project and install the following dependencies:
+To get started, clone the repo and install the dependencies.
 
 ```bash
-yarn hardhat init 
+git clone https://github.com/api3-ecosystem/prediction-market.git
+cd prediction-market
+```
+
+```bash
+yarn 
 ```
 
 The project structure should look like this:
 
 ```bash
-/
-/
-/
-/
+/backend
+/frontend
+/graph
+/README.md
 ```
 
-If you want to follow along with the code, you can clone the repo from here.
+`/backend` contains all the contracts and scripts to deploy/interact with our contracts.
 
-```bash
-git clone 
-```
+`/frontend` contains the frontend code for the prediction market.
+
+`/graph` contains the subgraph code to index the prediction market.
 
 ## Coding the Prediction Market
 
@@ -64,9 +69,9 @@ git clone
 
 We'll start by coding the interface for the Market Handler, Prediction Market and the MockUSDC contracts that will be responsible for handling all the bets, buying and selling tokens on both sides and concluding the prediction on the settlement date.
 
-We are using a simple ERC20 implementation for a mockUSDC to be used on the testnet. You can use any ERC20 token you want.
+We are using a simple ERC20 implementation for a mock USDC to be used on the testnet. You can use any ERC20 token you want.
 
-Make three new contract interfaces `IERC20.sol, IMarketHandler.sol, IPredictionMarket.sol` under the `/interfaces` directory and add the following code:
+There are three contract interfaces `IERC20.sol, IMarketHandler.sol, IPredictionMarket.sol` under the `/interfaces` directory:
 
 `IERC20.sol`
 ```solidity
@@ -150,9 +155,9 @@ interface IPredictionMarket {
 
 ### Coding `PredictionMarket.sol`
 
-We can now move forward and start coding the main Prediction Market contract that will be responsible for making new markets and then concluding them on the settlement date.
+We can now move forward and start understanding the main Prediction Market contract that will be responsible for making new markets and then concluding them on the settlement date.
 
-Make a new file called `PredictionMarket.sol` in the `/contracts` directory and add the following code:
+Under `/backend/contracts/common` directory, you'll find `PredictionMarket.sol` contract.
 
 ```solidity
 // SPDX-License-Identifier: MIT
@@ -175,6 +180,7 @@ struct Prediction {
     bool isActive; // Check if the prediction is open or closed
     address marketHandler; // The contract responsible for betting on the prediction.
     uint256 predictionTokenPrice; // The price of either of the token for a given market handler.
+    int224 priceAtConclude; // Price returns from the dapi call.
 }
 
 /// @notice Error codes
@@ -272,6 +278,16 @@ contract PredictionMarket is Context, Ownable {
         nextPredictionId.increment();
     }
 
+    function bytes32ToString(
+        bytes32 _bytes32Data
+    ) public pure returns (string memory) {
+        bytes memory bytesData = new bytes(32);
+        for (uint i = 0; i < 32; i++) {
+            bytesData[i] = _bytes32Data[i];
+        }
+        return string(bytesData);
+    }
+
     /// @notice Called by the owner on behalf of the _caller and create a market for them.
     /// @notice Step necessary to make sure all the parameters are vaild and are true with no manipulation.
     /// @param _tokenSymbol The symbol to represent the asset we are prediction upon. Eg : BTC / ETH / XRP etc.
@@ -280,7 +296,7 @@ contract PredictionMarket is Context, Ownable {
     /// @param _basePrice The minimum cost of one 'Yes' or 'No' token for the prediction market to be created.
     /// Is a multiple of 0.01 USD or 1 cent.
     function createPrediction(
-        string memory _tokenSymbol,
+        bytes32 _tokenSymbol,
         address _proxyAddress,
         bool _isAbove,
         int224 _targetPricePoint,
@@ -323,7 +339,7 @@ contract PredictionMarket is Context, Ownable {
         );
 
         Prediction memory toAdd = Prediction({
-            tokenSymbol: _tokenSymbol,
+            tokenSymbol: bytes32ToString(_tokenSymbol),
             targetPricePoint: _targetPricePoint,
             isAbove: _isAbove,
             proxyAddress: _proxyAddress,
@@ -332,7 +348,8 @@ contract PredictionMarket is Context, Ownable {
             deadline: _deadline,
             marketHandler: address(predictionMH),
             predictionTokenPrice: _basePrice,
-            isActive: true
+            isActive: true,
+            priceAtConclude: -1
         });
 
         predictions[predictionId] = toAdd;
@@ -358,14 +375,27 @@ contract PredictionMarket is Context, Ownable {
     /// vote - False : The target price was predicted to be BELOW/ABOVE a threshold BUT IS ABOVE/BELOW the threshold respectively.
     function concludePrediction_2(
         uint256 _predictionId,
-        bool _vote
+        bool _vote,
+        address _initiator,
+        int224 _readPrice
     ) external callerIsSettlement(_msgSender()) {
-        require(predictions[_predictionId].deadline > block.timestamp);
+        require(
+            predictions[_predictionId].deadline <= block.timestamp,
+            "Conclude_2 Failed."
+        );
 
         address associatedMHAddress = predictions[_predictionId].marketHandler;
         IMarketHandler mhInstance = IMarketHandler(associatedMHAddress);
 
         mhInstance.concludePrediction_3(_vote);
+
+        Prediction storage current = predictions[_predictionId];
+        current.isActive = false;
+        current.priceAtConclude = _readPrice;
+
+        /// Rewards for concluder
+        I_USDC_CONTRACT.transfer(_initiator, 40000000);
+        I_USDC_CONTRACT.transfer(vaultAddress, 10000000);
 
         emit PredictionConcluded(_predictionId, block.timestamp);
     }
@@ -445,6 +475,8 @@ contract PredictionMarket is Context, Ownable {
         );
     }
 
+    /// ============
+
     receive() external payable {}
 
     fallback() external payable {}
@@ -482,9 +514,9 @@ The settlement contract will use API3's dAPIs to get the price of the token on t
 
 ## Coding the Settlement Contract
 
-We can now move forward and start coding the settlement contract that will be responsible for concluding the prediction on the settlement date.
+We can now move forward and start understanding the settlement contract that will be responsible for concluding the prediction on the settlement date.
 
-Make a new file called `Settlement.sol` in the `/contracts` directory and add the following code:
+Under `backend/contracts/common`, you'll find `Settlement.sol` contract.
 
 ```solidity
 //SPDX-License-Identifier:MIT
@@ -589,7 +621,7 @@ The `MarketHandler` contract will be responsible for handling all the bets, buyi
 
 Each time a new market is created on the prediction market contract, a new market handler contract gets deployed.
 
-Make a new file called `MarketHandler.sol` in the `/contracts` directory and add the following code:
+Under backend/contracts/v1, you'll find `MarketHandler.sol` contract.
 
 ```solidity
 // SPDX-License-Identifier: MIT
@@ -1125,3 +1157,65 @@ contract MockUSDC is ERC20 {
 }
 ```
 
+## Deploying the Contracts
+
+We can now move forward and deploy the contracts on a testnet. For this tutorial, we'll be using the Polygon Mumbai Testnet. You can use any testnet of your choice.
+
+We'll be using hardhat to deploy the contracts. You can learn more about hardhat [here](https://hardhat.org/getting-started/).
+
+The project has hardhat configured already. You can check the `hardhat.config.js` to see the configuration.
+
+Create a `.env` file under the `/backend/` directory and add the following:
+
+- `PK_DEPLOYER` - The private key of the account that will be used to deploy the contracts.
+- `PROVIDER` - Your preferred RPC provider. For this tutorial, we'll be using the Polygon Mumbai Testnet.
+
+Under `deploy`, you will find `0_deploy.js` file. This script will be used to deploy the contracts on the testnet.
+
+```bash
+yarn deploy
+```
+
+This command will deploy the contracts on Polygon Mumbai Testnet and print the contract addresses on the console.
+
+```bash
+Compiled 18 Solidity files successfully
+
+Deployed MockUSDC at   : 0xEb896759724F0FC2AFd2432eEfCfDBA90413A12f
+Deployed Vault at      : 0xc9D15c476017a3627254561C25930722F22d7b18
+Deployed Trading at    : 0x18B9379b088013f4D465CbB46b866552a8463421
+Deployed Settlement at : 0xC61c6be11E98e528683db826ea2D6C3de7f51625
+```
+
+## Interacting with the contracts
+
+### Creating a new prediction market
+
+After deploying the contracts, we can now interact with them. We'll be using the `PredictionMarket.sol` contract to create a new prediction market.
+Head over to `scripts/createNewPrediction.js` and add the details about the market you want to create. To get the `proxyAddress` for your asset, you can use the [API3 Market](https://dapis.api3.org/). You can explore and find the proxy address for your asset.
+
+Add in your values for `symbol`, `proxyAddress`, `isAbove`, `targetPrice`, `deadline`, `basePrice` and run the script with the following command:
+
+```bash
+yarn create-new-prediction
+```
+
+This will approve the spending limit for your Mock USDC and create a new prediction market.
+
+### Concluding the prediction
+
+Any user can come in and conclude a prediction if its past the deadline. To conclude a prediction, we'll be using the `Settlement.sol` contract. Head over to `scripts/concludePrediction.js` and add the `predictionId` of the prediction you want to conclude and run the script with the following command:
+
+```bash
+yarn conclude-prediction
+```
+
+This will conclude the prediction and print the result on the console.
+
+-------- testing --------
+
+### Buying tokens
+
+Any user can come in and buy tokens for a particular prediction. To buy tokens, we'll be using the `MarketHandler.sol` contract. Head over to `scripts/buyTokens.js` and add the `predictionId` of the prediction you want to buy tokens for and the `amount` of tokens you want to buy and run the script with the following command:
+
+```bash
