@@ -1216,6 +1216,12 @@ This will conclude the prediction and print the result on the console.
 
 ### Buying tokens
 
-Any user can come in and buy tokens for a particular prediction. To buy tokens, we'll be using the `MarketHandler.sol` contract. Head over to `scripts/buyTokens.js` and add the `predictionId` of the prediction you want to buy tokens for and the `amount` of tokens you want to buy and run the script with the following command:
+Any user can come in and buy tokens for a particular prediction. To buy tokens, we'll be using the `MarketHandler.sol` contract. Head over to `scripts/buyYesTokens.js` or `scripts/buyNoToken.js` and add the `predictionId` of the prediction you want to buy tokens for and the `amount` of tokens you want to buy and run the script with the following command:
 
 ```bash
+## For buying Yes tokens
+yarn buy-yes-tokens
+
+## For buying Yes tokens
+yarn buy-no-tokens
+```
